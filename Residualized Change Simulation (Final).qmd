@@ -546,9 +546,6 @@ RMSEA_anova_table <- get_anova_table(RMSEA_anova)
 
 write.csv(RMSEA_anova_table, "RMSEA ANOVA Table.csv", row.names = FALSE)
 
-save(p_val_anova, RMSEA_anova,
-     file =  "Residualized Change Simulation Analysis.RData")
-
 # Monte Carlo SEs
 avg_RMSEA_data <- longer_sim_props[longer_sim_props$Statistic == "Avg RMSEA",]
 variance_RMSEA <- as.data.frame(variance_RMSEA)
