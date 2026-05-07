@@ -1,0 +1,686 @@
+---
+title: "Residualized Change Simulation"
+author: "Gareth Yu"
+format: html
+editor: visual
+---
+
+# Setup
+
+```{r}
+library(lavaan)
+library(tidyverse)
+library(mvtnorm)
+library(effectsize)
+library(lme4)
+library(rstatix)
+library(ggplot2)
+library(ggpubr)
+library(jtools)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(latex2exp)
+```
+
+## Functions
+
+### Two-step Model Syntax
+
+```{r}
+rc_model <- function(data_frame) {
+  
+  # Calculate Regression Slopes
+  m_regression <- lm(m2~m1, data = data_frame)
+  mslope <- m_regression$coefficients["m1"]
+  y_regression <- lm(y2~y1, data = data_frame)
+  yslope <- y_regression$coefficients["y1"]
+  
+  # Create Residualized Change Model
+  res_syntax <- paste0(
+  '
+  #Defining change in M as a function of M1 and M2
+  deltam =~ 1*m2
+  deltam ~~ deltam
+  deltam ~ imd0*1 
+  m2 ~ ', mslope,'*m1
+  m2 ~~ 0*m1
+  m2 ~~ 0*m2
+  m2 ~ 0*1
+  m1 ~ im10*1
+  #Defining the change in Y as a function of Y1 and Y2
+  deltay =~ 1*y2
+  deltay ~~ deltay
+  deltay ~ iyd0*1
+  y2 ~ ', yslope, '*y1
+  y2 ~~ 0*y1
+  y2 ~~ 0*y2
+  y2 ~ 0*1
+  y1 ~ iy10*1
+  #Estimating the Pretest correlation between M1 and Y1 and Variance of X
+  m1 ~~ y1
+  # Estimated covariance between M1 and X and Y1 and X because these covariances may not be equal to zero especially if X is not a randomized experiment
+  # without these the model has 2 degrees of freedom (covariances are only constrained to zero) but ANCOVA model should start out as saturated and have 0 degrees of freedom 
+  m1 ~ am1x*x # these covariances may not be equal to zero especially if X is not a randomized experiment
+  y1 ~ cy1x*x # these covariances may not be equal to zero especially if X is not a randomized experiment
+  #Regression of change in M on X and pretest measures
+  deltam ~ am2x*x 
+  #Regression of change in Y on X, change in M, and pretest measures
+  deltay ~ cp*x + by2m2*deltam 
+  #Estimate of mediated effect
+  med := am2x*by2m2 
+  # Intercept of delta m group 1
+  imd1 := imd0+am2x
+  # Intercept of m1 in group 1
+  im11 := im10+am1x
+  # Intercept of delta y group 1
+  iyd1 := iyd0+cp
+  # Intercept of y1 in group 1
+  iy11 := iy10+cy1x
+  ')
+  
+  res <- lavaan::sem(model = res_syntax, data = data_frame, fixed.x = FALSE)
+  res
+}
+```
+
+### Original and Adjusted DF Model Statistics
+
+```{r}
+rc_model_stats <- function(data_frame) {
+  
+  # Calculate Regression Slopes
+  m_regression <- lm(m2~m1, data = data_frame)
+  mslope <- m_regression$coefficients["m1"]
+  y_regression <- lm(y2~y1, data = data_frame)
+  yslope <- y_regression$coefficients["y1"]
+  
+  # Create Residualized Change Model
+  res_syntax <- paste0(
+  '
+  #Defining change in M as a function of M1 and M2
+  deltam =~ 1*m2
+  deltam ~~ deltam
+  deltam ~ imd0*1 
+  m2 ~ ', mslope,'*m1
+  m2 ~~ 0*m1
+  m2 ~~ 0*m2
+  m2 ~ 0*1
+  m1 ~ im10*1
+  #Defining the change in Y as a function of Y1 and Y2
+  deltay =~ 1*y2
+  deltay ~~ deltay
+  deltay ~ iyd0*1
+  y2 ~ ', yslope, '*y1
+  y2 ~~ 0*y1
+  y2 ~~ 0*y2
+  y2 ~ 0*1
+  y1 ~ iy10*1
+  #Estimating the Pretest correlation between M1 and Y1 and Variance of X
+  m1 ~~ y1
+  # Estimated covariance between M1 and X and Y1 and X because these covariances may not be equal to zero especially if X is not a randomized experiment
+  # without these the model has 2 degrees of freedom (covariances are only constrained to zero) but ANCOVA model should start out as saturated and have 0 degrees of freedom 
+  m1 ~ am1x*x # these covariances may not be equal to zero especially if X is not a randomized experiment
+  y1 ~ cy1x*x # these covariances may not be equal to zero especially if X is not a randomized experiment
+  #Regression of change in M on X and pretest measures
+  deltam ~ am2x*x 
+  #Regression of change in Y on X, change in M, and pretest measures
+  deltay ~ cp*x + by2m2*deltam 
+  #Estimate of mediated effect
+  med := am2x*by2m2 
+  # Intercept of delta m group 1
+  imd1 := imd0+am2x
+  # Intercept of m1 in group 1
+  im11 := im10+am1x
+  # Intercept of delta y group 1
+  iyd1 := iyd0+cp
+  # Intercept of y1 in group 1
+  iy11 := iy10+cy1x
+  ')
+  
+  res <- lavaan::sem(model = res_syntax, data = data_frame, fixed.x = FALSE)
+  
+  # Calculate Model Fit Statistics
+  df_original <- fitMeasures(res, "df")
+  df_lower <- fitMeasures(res, "df") - 2
+
+  ## Chi-square
+  chisq_original <- fitMeasures(res, "chisq")
+  chisq_p_original <- fitMeasures(res, "pvalue")
+  chisq_p_lower_df <- pchisq(chisq_original, df_lower, lower.tail = FALSE)
+  
+  ## RMSEA
+  RMSEA_original <- fitMeasures(res, "rmsea")
+  RMSEA_lower_df <- sqrt((max(chisq_original - df_lower, 0))/(df_lower*(nobs(res))))
+  
+  # Print Output
+  output <- c(chisq_original, df_original, chisq_p_original, RMSEA_original, 
+                              df_lower, chisq_p_lower_df, RMSEA_lower_df)
+  names(output) <- c("Two-step Chi-square",
+                     "Original DF",
+                     "Original Chi-square p-value",
+                     "Original RMSEA",
+                     "DF-Adjusted DF",
+                     "DF-Adjusted Chi-square p-value",
+                     "DF-Adjusted RMSEA")
+  output
+}
+```
+
+### One-step Model and Statistics
+
+```{r}
+rc_model_stats_one_step <- function(data_frame) {
+  # Create Residualized Change Model
+  res_syntax <- paste0(
+  '
+  #Defining change in M as a function of M1 and M2
+  deltam =~ 1*m2
+  deltam ~~ deltam
+  deltam ~ imd0*1 
+  m2 ~ bm2m1*m1
+  m2 ~~ 0*m1
+  m2 ~~ 0*m2
+  m2 ~ 0*1
+  m1 ~ im10*1
+  #Defining the change in Y as a function of Y1 and Y2
+  deltay =~ 1*y2
+  deltay ~~ deltay
+  deltay ~ iyd0*1
+  y2 ~ by2y1*y1
+  y2 ~~ 0*y1
+  y2 ~~ 0*y2
+  y2 ~ 0*1
+  y1 ~ iy10*1
+  #Estimating the Pretest correlation between M1 and Y1 and Variance of X
+  m1 ~~ y1
+  # Estimated covariance between M1 and X and Y1 and X because these covariances may not be equal to zero especially if X is not a randomized experiment
+  # without these the model has 2 degrees of freedom (covariances are only constrained to zero) but ANCOVA model should start out as saturated and have 0 degrees of freedom 
+  m1 ~ am1x*x # these covariances may not be equal to zero especially if X is not a randomized experiment
+  y1 ~ cy1x*x # these covariances may not be equal to zero especially if X is not a randomized experiment
+  #Regression of change in M on X and pretest measures
+  deltam ~ am2x*x 
+  #Regression of change in Y on X, change in M, and pretest measures
+  deltay ~ cp*x + by2m2*deltam 
+  #Estimate of mediated effect
+  med := am2x*by2m2 
+  # Intercept of delta m group 1
+  imd1 := imd0+am2x
+  # Intercept of m1 in group 1
+  im11 := im10+am1x
+  # Intercept of delta y group 1
+  iyd1 := iyd0+cp
+  # Intercept of y1 in group 1
+  iy11 := iy10+cy1x
+  ')
+  
+  res <- lavaan::sem(model = res_syntax, data = data_frame, fixed.x = FALSE)
+  
+  # Calculate Model Fit Statistics
+  df <- fitMeasures(res, "df")
+
+  ## Chi-square
+  chisq <- fitMeasures(res, "chisq")
+  chisq_p <- fitMeasures(res, "pvalue")
+  
+  ## RMSEA
+  RMSEA <- fitMeasures(res, "rmsea")
+  
+  # Print Output
+  output <- c(chisq, df, chisq_p, RMSEA)
+  names(output) <- c("One-step Chi-square",
+                     "One-step DF",
+                     "One-step Chi-square p-value",
+                     "One-step RMSEA")
+  output
+}
+```
+
+### Miscellaneous
+
+```{r}
+## Function to subset the main df by specific values
+find_subset <- function(df, N, bm2m1, by2y1, br, Model = "") {
+  output <- df[df$N == N,]
+  output <- output[output$bm2m1 == bm2m1,]
+  output <- output[output$by2y1 == by2y1,]
+  output <- output[output$br == br,]
+  if (!(Model == "")) {
+    output <- output[output$Model == Model,]
+  }
+  output
+}
+
+### Finds the average proportions for changes in variable of interest
+find_change <- function(df, var_of_interest) {
+  if (var_of_interest == "br") {
+    vals <- br_vals
+  } else if (var_of_interest == "bm2m1") {
+    vals <- bm2m1_vals
+  } else if (var_of_interest == "by2y1") {
+    vals <- by2y1_vals
+  } else if (var_of_interest == "N") {
+    vals <- N_sizes 
+  }
+  output <- data.frame()
+  
+  for (val in vals) {
+    curr_mat <- df[df[,var_of_interest]==val,]
+    curr_row <- colMeans(curr_mat)
+    curr_row <- c(curr_row[var_of_interest], curr_row[5:length(curr_row)])
+    output <- rbind(output, curr_row)
+  }
+  colnames(output) <- c(var_of_interest,
+                        "Orig Chi-p < 0.05",
+                        "Adj Chi-p < 0.05",
+                        "One-step Chi-p < 0.05",
+                        "Avg Orig RMSEA",
+                        "Avg Adj RMSEA",
+                        "Avg One-step RMSEA")
+  output
+}
+```
+
+# Simulation
+
+## Data Generation and Model Statistics
+
+```{r}
+set.seed(81)
+N_sizes <- c(50, 100, 200, 500)
+bm2m1_vals <- c(0, 0.30, 0.70, 1.00)
+by2y1_vals <- c(0, 0.30, 0.70, 1.00)
+br_vals <- c(0, 0.14, 0.25, 0.39, 0.59, 0.79)
+num_datasets <- 1000
+
+# Simulation Output Data Frame
+sim_output <- data.frame(
+  "N" = integer(),
+  "bm2m1" = numeric(),
+  "by2y1" = numeric(),
+  "br" = numeric(),
+  "Two-step Chi-square" = numeric(),
+  "Original DF" = integer(),
+  "Original Chi-square p-value" = numeric(),
+  "Original RMSEA" = numeric(),
+  "DF-Adjusted DF" = integer(),
+  "DF-Adjusted Chi-square p-value" = numeric(),
+  "DF-Adjusted RMSEA" = numeric(),
+  "One-step Chi-square" = numeric(),
+  "One-step DF" = integer(),
+  "One-step Chi-square p-value" = numeric(),
+  "One-step RMSEA" = numeric())
+
+# Run Simulation
+for (br in br_vals) {
+  for (by2y1 in by2y1_vals) {
+    for (bm2m1 in bm2m1_vals) {
+      for (N in N_sizes) {
+        for (i in seq_len(num_datasets)) {
+          
+          # Generate X
+          x <- rep(c(0,1), times = N/2)
+          x <- sample(x)
+          
+          # Generate M1 and Y1
+          m1mean <- 0
+          y1mean <- 0
+          meanm1y1 <- c(m1mean, y1mean) 
+          sm1y1 <- 0.5
+          
+          matrix_sm1y1 <- matrix(c(1, sm1y1, 
+                            sm1y1, 1), nrow = 2)
+          
+          m1y1_matrix <- rmvnorm(N, mean = meanm1y1, sigma = matrix_sm1y1)
+          
+          m1 <- m1y1_matrix[, 1]
+          y1 <- m1y1_matrix[, 2]
+          
+          # Generate deltam and deltay
+          dmemean <- 0
+          dmesd <- 1
+          am2x <- 0.14
+          deltam <- am2x*x + 0*y1 + rnorm(N, mean = dmemean, sd = dmesd)
+          
+          dyemean <- 0
+          dyesd <- 1
+          cpr <- 0.39
+          deltay <- cpr*x + 0*m1 + br*deltam + rnorm(N, mean = dyemean, sd = dyesd)
+          
+          
+          # Generate M2 and Y2
+          m2 <- bm2m1*m1 + 1*deltam 
+          y2 <- by2y1*y1 + 1*deltay
+          
+          # Calculate Model Statistics
+          generated_data <- data.frame(cbind(x, y1, m1, y2, m2))
+          sim_output <- rbind(sim_output, c(N, bm2m1, by2y1, br, rc_model_stats(generated_data), rc_model_stats_one_step(generated_data)))
+        }
+        print(paste0("br=", br, " by2y1=", by2y1, " bm2m1=", bm2m1, " N=", N, " COMPLETED"))
+      } 
+    }
+  }
+}
+names(sim_output) <- c("N", "bm2m1", "by2y1", "br", 
+                       "Two-step Chi-square",
+                       "Original DF",
+                       "Original Chi-square p-value",
+                       "Original RMSEA",
+                       "DF-Adjusted DF",
+                       "DF-Adjusted Chi-square p-value",
+                       "DF-Adjusted RMSEA", 
+                       "One-step Chi-square",
+                       "One-step DF",
+                       "One-step Chi-square p-value",
+                       "One-step RMSEA")
+
+write.csv(sim_output, "Residualized Change Simulation Output.csv", row.names = FALSE)
+save(sim_output, N_sizes, bm2m1_vals, by2y1_vals, br_vals, num_datasets,
+     file =  "Residualized Change Simulation Output.RData")
+```
+
+## Analysis
+
+```{r}
+# Load Simulation Output
+load("Residualized Change Simulation Output.RData")
+
+sim_output$sim_ID <- 1:nrow(sim_output)
+
+# Separate each model / statistic into a separate row
+longer_sim_output <- sim_output %>%
+  pivot_longer(
+    cols = -c(N, bm2m1, by2y1, br, sim_ID),  
+    names_to = c("Model", "Statistic"),
+    names_pattern = "^([^ ]+) (.+)$",     
+    values_to = "Value"
+  )
+
+longer_sim_output <- longer_sim_output %>%
+  mutate(
+    Model = recode(Model, "Two-step" = "Two-Step", "Original" = "Standard Two-Step", "One-step" = "One-Step", "DF-Adjusted" = "df-Adjusted Two-Step")
+  )
+
+Models <- c("Standard Two-Step", "One-Step", "df-Adjusted Two-Step")
+
+# Calculate Proportions
+sim_props <- data.frame(
+  "N" = integer(),
+  "bm2m1" = numeric(),
+  "by2y1" = numeric(),
+  "br" = numeric(),
+  "Original Chi-p < 0.05" = numeric(),
+  "Adj Chi-p < 0.05" = numeric(),
+  "One-step Chi-p < 0.05" = numeric(),
+  "Avg Orig RMSEA" = numeric(),
+  "Avg Adj RMSEA" = numeric(),
+  "Avg One-step RMSEA" = numeric()
+)
+
+variance_RMSEA <- numeric(0)
+
+## Find the proportions for all combinations of variable values
+for (br in br_vals) {
+  for (by2y1 in by2y1_vals) {
+    for (bm2m1 in bm2m1_vals) {
+      for (N in N_sizes) {
+        temp_matrix <- find_subset(sim_output, N, bm2m1, by2y1, br)
+        temp_props <- c(N, bm2m1, by2y1, br,
+                        mean(temp_matrix[,"Original Chi-square p-value"] < 0.05),
+                        mean(temp_matrix[,"DF-Adjusted Chi-square p-value"] < 0.05),
+                        mean(temp_matrix[,"One-step Chi-square p-value"] < 0.05),
+                        mean(temp_matrix[,"Original RMSEA"]),
+                        mean(temp_matrix[,"DF-Adjusted RMSEA"]),
+                        mean(temp_matrix[,"One-step RMSEA"]))
+        sim_props <- rbind(sim_props, temp_props)
+        
+        # Calculate variance of RMSEA
+        for (Model in Models) {
+          longer_temp_matrix <- find_subset(longer_sim_output, N, bm2m1, by2y1, br, Model)
+          temp_variance <- var(longer_temp_matrix[longer_temp_matrix$Statistic == "RMSEA","Value"])
+          variance_RMSEA <- rbind(variance_RMSEA, c(N, bm2m1, by2y1, br, Model, temp_variance))
+        }
+      }
+    }
+  }
+}
+
+colnames(variance_RMSEA) <- c("N", "bm2m1", "by2y1", "br", "Model", "Variance")
+
+colnames(sim_props) <- c("N", "bm2m1", "by2y1", "br",
+                         "Orig Chi-p < 0.05",
+                         "Adj Chi-p < 0.05",
+                         "One-step Chi-p < 0.05",
+                         "Orig Avg RMSEA",
+                         "Adj Avg RMSEA",
+                         "One-step Avg RMSEA")
+
+sim_props
+
+# Separate each model / statistic into a separate row
+longer_sim_props <- sim_props %>%
+  pivot_longer(
+    cols = -c(N, bm2m1, by2y1, br), 
+    names_to = c("Model", "Statistic"),
+    names_pattern = "^([^ ]+) (.+)$",     
+    values_to = "Value"
+  )
+
+longer_sim_props <- longer_sim_props %>%
+  mutate(
+    Model = recode(Model, "Orig" = "Standard Two-Step", "One-step" = "One-Step", "Adj" = "df-Adjusted Two-Step")
+  )
+
+# Find the average proportions for changes in variable of interest
+find_change(sim_props, "br")
+find_change(sim_props, "bm2m1")
+find_change(sim_props, "by2y1")
+find_change(sim_props, "N")
+
+write.csv(sim_props, "Residualized Change Simulation Output (Aggregated).csv", row.names = FALSE)
+
+save(sim_output, sim_props, longer_sim_output, longer_sim_props, 
+     N_sizes, bm2m1_vals, by2y1_vals, br_vals, num_datasets,
+     file =  "Residualized Change Simulation Output (Pre-processed).RData")
+```
+
+### Chi-square
+
+```{r}
+load("Residualized Change Simulation Output (Pre-processed).RData")
+
+# Mixed ANOVA
+chi_square_p_value_data <- longer_sim_output[longer_sim_output$Statistic == "Chi-square p-value",]
+
+p_val_anova <- anova_test(data = chi_square_p_value_data, 
+                          dv = Value, wid = sim_ID, 
+                          within = Model, between = c(N, br, bm2m1, by2y1))
+p_val_anova
+p_value_anova_table <- get_anova_table(p_val_anova)
+
+write.csv(p_value_anova_table, "p-value ANOVA Table.csv", row.names = FALSE)
+
+# Monte Carlo SEs
+type_i_error_data <- longer_sim_props[longer_sim_props$Statistic == "Chi-p < 0.05",]
+mcse_error_rate <- sqrt(type_i_error_data$Value * (1 - type_i_error_data$Value)/num_datasets)
+final_type_i_error_data <- cbind(type_i_error_data, mcse_error_rate)
+colnames(final_type_i_error_data)[colnames(final_type_i_error_data) == "mcse_error_rate"] <- "MCSE"
+max(final_type_i_error_data[final_type_i_error_data$Model == "Standard Two-Step","MCSE"])
+max(final_type_i_error_data[final_type_i_error_data$Model == "df-Adjusted Two-Step","MCSE"])
+max(final_type_i_error_data[final_type_i_error_data$Model == "One-Step","MCSE"])
+```
+
+#### Descriptives
+
+```{r}
+# Number of conditions in the robustness interval as defined by Bradley (1978) 
+cat("\nIn robustness interval\n")
+sum(sim_props$`Orig Chi-p < 0.05` >= 0.025 & sim_props$`Orig Chi-p < 0.05` <= 0.075)
+sum(sim_props$`Adj Chi-p < 0.05` >= 0.025 & sim_props$`Adj Chi-p < 0.05` <= 0.075)
+sum(sim_props$`One-step Chi-p < 0.05` >= 0.025 & sim_props$`One-step Chi-p < 0.05` <= 0.075)
+
+# Number of conditions below the robustness interval
+cat("\nBelow robustness interval\n")
+sum(sim_props$`Orig Chi-p < 0.05` < 0.025)
+sum(sim_props$`Adj Chi-p < 0.05` < 0.025)
+sum(sim_props$`One-step Chi-p < 0.05` < 0.025)
+
+# Number of conditions above the robustness interval 
+cat("\nAbove robustness interval\n")
+sum(sim_props$`Orig Chi-p < 0.05` > 0.075)
+sum(sim_props$`Adj Chi-p < 0.05` > 0.075)
+sum(sim_props$`One-step Chi-p < 0.05` > 0.075)
+```
+
+### RMSEA
+
+```{r}
+# Mixed ANOVA
+RMSEA_data <- longer_sim_output[longer_sim_output$Statistic == "RMSEA",]
+
+RMSEA_anova <- anova_test(data = RMSEA_data, 
+                          dv = Value, wid = sim_ID, 
+                          within = Model, between = c(N, br, bm2m1, by2y1))
+RMSEA_anova
+RMSEA_anova_table <- get_anova_table(RMSEA_anova)
+
+write.csv(RMSEA_anova_table, "RMSEA ANOVA Table.csv", row.names = FALSE)
+
+save(p_val_anova, RMSEA_anova,
+     file =  "Residualized Change Simulation Analysis.RData")
+
+# Monte Carlo SEs
+avg_RMSEA_data <- longer_sim_props[longer_sim_props$Statistic == "Avg RMSEA",]
+variance_RMSEA <- as.data.frame(variance_RMSEA)
+key <- names(avg_RMSEA_data)[1:5]
+
+variance_RMSEA[key] <- Map(function(x, y) as(y, class(x)), 
+                           avg_RMSEA_data[key], 
+                           variance_RMSEA[key])
+
+avg_RMSEA_data <- as.data.frame(avg_RMSEA_data)
+variance_RMSEA_reordered <- avg_RMSEA_data %>%
+  select(1:5) %>% 
+  left_join(variance_RMSEA, by = names(avg_RMSEA_data)[1:5])
+
+mcse_mean_RMSEA <- sqrt(as.numeric(variance_RMSEA_reordered$Variance)/num_datasets)
+final_avg_RMSEA_data <- cbind(avg_RMSEA_data, mcse_mean_RMSEA)
+colnames(final_avg_RMSEA_data)[colnames(final_avg_RMSEA_data) == "mcse_mean_RMSEA"] <- "MCSE"
+max(final_avg_RMSEA_data[final_avg_RMSEA_data$Model == "Standard Two-Step","MCSE"])
+max(final_avg_RMSEA_data[final_avg_RMSEA_data$Model == "df-Adjusted Two-Step","MCSE"])
+max(final_avg_RMSEA_data[final_avg_RMSEA_data$Model == "One-Step","MCSE"])
+```
+
+#### Descriptives
+
+```{r}
+# Percent of iterations showing excellent fit
+cat("\nExcellent fit\n")
+sum(sim_output$`Original RMSEA` <= 0.01)/nrow(sim_output)
+sum(sim_output$`DF-Adjusted RMSEA` <= 0.01)/nrow(sim_output)
+sum(sim_output$`One-step RMSEA` <= 0.01)/nrow(sim_output)
+
+# Percent of iterations showing close fit
+cat("\nClose fit\n")
+sum(sim_output$`Original RMSEA` <= 0.05)/nrow(sim_output)
+sum(sim_output$`DF-Adjusted RMSEA` <= 0.05)/nrow(sim_output)
+sum(sim_output$`One-step RMSEA` <= 0.05)/nrow(sim_output)
+
+# Percent of iterations showing fair fit
+cat("\nFair fit\n")
+sum(sim_output$`Original RMSEA` <= 0.08)/nrow(sim_output)
+sum(sim_output$`DF-Adjusted RMSEA` <= 0.08)/nrow(sim_output)
+sum(sim_output$`One-step RMSEA` <= 0.08)/nrow(sim_output)
+
+# Percent of iterations showing mediocre fit
+cat("\nMediocre fit\n")
+sum(sim_output$`Original RMSEA` <= 0.1)/nrow(sim_output)
+sum(sim_output$`DF-Adjusted RMSEA` <= 0.1)/nrow(sim_output)
+sum(sim_output$`One-step RMSEA` <= 0.1)/nrow(sim_output)
+
+# Percent of iterations not showing close fit
+cat("\nPoor fit\n")
+sum(sim_output$`Original RMSEA` > 0.1)/nrow(sim_output)
+sum(sim_output$`DF-Adjusted RMSEA` > 0.1)/nrow(sim_output)
+sum(sim_output$`One-step RMSEA` > 0.1)/nrow(sim_output)
+```
+
+# Graphs
+
+## Type I Error
+
+```{r}
+# Type I Error Plots for ANOVA
+## Format Variables for ANOVA Plot
+TIE_plot_data <- type_i_error_data
+colnames(TIE_plot_data)[colnames(TIE_plot_data) == "Value"] <- "Type I Error Rate"
+TIE_plot_data$Model <- factor(TIE_plot_data$Model, levels=c("One-Step", "df-Adjusted Two-Step", "Standard Two-Step"))
+TIE_plot_data$by2y1 <- factor(TIE_plot_data$by2y1)
+
+TIE_plot_data$bm2m1 <- factor(TIE_plot_data$bm2m1)
+levels(TIE_plot_data$bm2m1) <- c("0" = TeX("$\\textit{b_{m2m1}} = 0$"), "0.3" = TeX("$\\textit{b_{m2m1}} = 0.3$"), "0.7" = TeX("$\\textit{b_{m2m1}} = 0.7$"), "1" = TeX("$\\textit{b_{m2m1}} = 1$"))
+
+TIE_plot_data$br <- factor(TIE_plot_data$br)
+levels(TIE_plot_data$br) <- c("0" = TeX("$\\textit{b_{R}} = 0$"), "0.14" = TeX("$\\textit{b_{R}} = 0.14$"), "0.25" = TeX("$\\textit{b_{R}} = 0.25$"), "0.39" = TeX("$\\textit{b_{R}} = 0.39$"), "0.59" = TeX("$\\textit{b_{R}} = 0.59$"), "0" = TeX("$\\textit{b_{R}} = 0.79$"))
+
+## Create TIE ANOVA Plot
+TIE_ANOVA_plot <- ggplot(TIE_plot_data, aes(x = N, y = `Type I Error Rate`, color = Model, shape = Model)) + 
+  geom_point() + 
+  geom_line(aes(linetype = by2y1), alpha = 0.3) + 
+  scale_color_manual(values = c("#F8766D", "#00A9FF", "#0CB702")) + 
+  labs(x = "Sample Size",
+       y = "Type I Error",
+       color = "Residualized Change Model",
+       shape = "Residualized Change Model",
+       linetype = TeX("$\\textit{b_{y2y1}}$")) +
+  theme_apa(legend.use.title = TRUE) + 
+  annotate("rect", xmin =0, xmax = 550, ymin = 0.025, ymax = 0.075,
+        alpha = .2) 
+
+arranged_TIE_ANOVA_plots <- TIE_ANOVA_plot + 
+                            facet_grid(br ~ bm2m1, labeller = label_parsed)
+
+ggsave("TIE ANOVA Plots.png", plot = arranged_TIE_ANOVA_plots, 
+       width = 10, height = 10) 
+```
+
+## RMSEA
+
+```{r}
+# ANOVA Plot
+## Format Variables for ANOVA Plot
+RMSEA_plot_data <- avg_RMSEA_data
+colnames(RMSEA_plot_data)[colnames(RMSEA_plot_data) == "Value"] <- "Average RMSEA"
+
+RMSEA_plot_data$Model <- factor(RMSEA_plot_data$Model, levels=c("One-Step", "df-Adjusted Two-Step", "Standard Two-Step"))
+
+RMSEA_plot_data$by2y1 <- factor(RMSEA_plot_data$by2y1)
+
+RMSEA_plot_data$bm2m1 <- factor(RMSEA_plot_data$bm2m1)
+levels(RMSEA_plot_data$bm2m1) <- c("0" = TeX("$\\textit{b_{m2m1}} = 0$"), "0.3" = TeX("$\\textit{b_{m2m1}} = 0.3$"), "0.7" = TeX("$\\textit{b_{m2m1}} = 0.7$"), "1" = TeX("$\\textit{b_{m2m1}} = 1$"))
+
+RMSEA_plot_data$br <- factor(RMSEA_plot_data$br)
+levels(RMSEA_plot_data$br) <- c("0" = TeX("$\\textit{b_{R}} = 0$"), "0.14" = TeX("$\\textit{b_{R}} = 0.14$"), "0.25" = TeX("$\\textit{b_{R}} = 0.25$"), "0.39" = TeX("$\\textit{b_{R}} = 0.39$"), "0.59" = TeX("$\\textit{b_{R}} = 0.59$"), "0" = TeX("$\\textit{b_{R}} = 0.79$"))
+
+## Create ANOVA Plot
+RMSEA_ANOVA_plot <- ggplot(RMSEA_plot_data, aes(x = N, y = `Average RMSEA`, color = Model, shape = Model)) + 
+  geom_point() + 
+  labs(x = "Sample Size",
+       y = "Average RMSEA",
+       color = "Residualized Change Model",
+       shape = "Residualized Change Model",
+       linetype = TeX("$\\textit{b_{y2y1}}$")) +
+  geom_line(aes(linetype = factor(by2y1)), alpha = 0.3) + 
+  scale_color_manual(values =c("#F8766D", "#00A9FF", "#0CB702")) +
+  geom_hline(yintercept = 0.01, color = "purple4", linetype = 5, alpha = 0.4) + # Excellent Fit
+  geom_hline(yintercept = 0.05, color = "purple4", linetype = 5, alpha = 0.4) + # Close Fit
+  geom_hline(yintercept = 0.08, color = "purple4", linetype = 5, alpha = 0.4) + # Fair Fit
+  geom_hline(yintercept = 0.10, color = "purple4", linetype = 5, alpha = 0.4) + # Mediocre Fit
+  theme_apa(legend.use.title = TRUE)
+  
+arranged_RMSEA_ANOVA_plots <- RMSEA_ANOVA_plot + 
+                              facet_grid(br ~ bm2m1, labeller = label_parsed)
+
+ggsave("RMSEA ANOVA Plots.png", plot = arranged_RMSEA_ANOVA_plots, 
+       width = 10, height = 10) 
+```
