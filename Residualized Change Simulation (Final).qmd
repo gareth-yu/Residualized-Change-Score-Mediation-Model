@@ -637,8 +637,7 @@ TIE_ANOVA_plot <- ggplot(TIE_plot_data, aes(x = N, y = `Type I Error Rate`, colo
 arranged_TIE_ANOVA_plots <- TIE_ANOVA_plot + 
                             facet_grid(br ~ bm2m1, labeller = label_parsed)
 
-ggsave("TIE ANOVA Plots.png", plot = arranged_TIE_ANOVA_plots, 
-       width = 10, height = 10) 
+ggsave("TIE ANOVA Plots.jpg", plot = arranged_TIE_ANOVA_plots, width = 10, height = 10, dpi = 300)
 ```
 
 ## RMSEA
@@ -678,6 +677,5 @@ RMSEA_ANOVA_plot <- ggplot(RMSEA_plot_data, aes(x = N, y = `Average RMSEA`, colo
 arranged_RMSEA_ANOVA_plots <- RMSEA_ANOVA_plot + 
                               facet_grid(br ~ bm2m1, labeller = label_parsed)
 
-ggsave("RMSEA ANOVA Plots.png", plot = arranged_RMSEA_ANOVA_plots, 
-       width = 10, height = 10) 
+ggsave("RMSEA ANOVA Plots.jpg", plot = arranged_RMSEA_ANOVA_plots, width = 10, height = 10, dpi = 300)
 ```
