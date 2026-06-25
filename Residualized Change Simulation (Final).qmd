@@ -513,6 +513,9 @@ max(final_type_i_error_data[final_type_i_error_data$Model == "One-Step","MCSE"])
 #### Descriptives
 
 ```{r}
+# Condition with Lowest Type I Error Rate for Original Model
+sim_props[which.min(sim_props$`Orig Chi-p < 0.05`), ]
+
 # Number of conditions in the robustness interval as defined by Bradley (1978) 
 cat("\nIn robustness interval\n")
 sum(sim_props$`Orig Chi-p < 0.05` >= 0.025 & sim_props$`Orig Chi-p < 0.05` <= 0.075)
@@ -678,4 +681,69 @@ arranged_RMSEA_ANOVA_plots <- RMSEA_ANOVA_plot +
                               facet_grid(br ~ bm2m1, labeller = label_parsed)
 
 ggsave("RMSEA ANOVA Plots.jpg", plot = arranged_RMSEA_ANOVA_plots, width = 10, height = 10, dpi = 300)
+```
+
+# Tables
+## Chi-square
+
+```{r}
+# Keep only the relevant columns
+data_filtered <- sim_props %>%
+  select(N, bm2m1, by2y1, br, 
+         `Orig Chi-p < 0.05`, `Adj Chi-p < 0.05`, `One-step Chi-p < 0.05`)
+
+# Pivot the data to long format for easier manipulation
+data_long <- data_filtered %>%
+  pivot_longer(
+    cols = c(`Orig Chi-p < 0.05`, `Adj Chi-p < 0.05`, `One-step Chi-p < 0.05`),
+    names_to = "Model",
+    values_to = "Chi_p_lt_0.05"
+  )
+
+# Pivot back to wide format so that N and Model define columns
+table_formatted <- data_long %>%
+  mutate(Model = recode(Model,
+                        "Orig Chi-p < 0.05" = "Standard",
+                        "Adj Chi-p < 0.05" = "DF-Adjusted",
+                        "One-step Chi-p < 0.05" = "One-step")) %>%
+  pivot_wider(
+    names_from = c(N, Model),
+    values_from = Chi_p_lt_0.05
+  ) %>%
+  arrange(bm2m1, by2y1, br)
+
+# Save
+write.csv(table_formatted, "Type I Error Table.csv", row.names = FALSE)
+```
+
+## RMSEA
+
+```{r}
+# Keep only the relevant columns
+data_filtered <- sim_props %>%
+  select(N, bm2m1, by2y1, br, `Orig Avg RMSEA`, `Adj Avg RMSEA`, `One-step Avg RMSEA`)
+
+# Pivot the data to long format for easier manipulation
+data_long <- data_filtered %>%
+  pivot_longer(
+    cols = c(`Orig Avg RMSEA`, `Adj Avg RMSEA`, `One-step Avg RMSEA`),
+    names_to = "Model",
+    values_to = "RMSEA"
+  )
+
+# Pivot back to wide format so that N and Model define columns
+table_formatted <- data_long %>%
+  mutate(Model = recode(Model,
+                        "Orig Avg RMSEA" = "Standard",
+                        "Adj Avg RMSEA" = "DF-Adjusted",
+                        "One-step Avg RMSEA" = "One-step")) %>%
+  pivot_wider(
+    names_from = c(N, Model),
+    values_from = RMSEA
+  ) %>%
+  arrange(bm2m1, by2y1, br)
+
+# Save
+table_formatted <- round(table_formatted, 3)
+write.csv(table_formatted, "Average RMSEA Table.csv", row.names = FALSE)
 ```
