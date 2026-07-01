@@ -684,6 +684,7 @@ ggsave("RMSEA ANOVA Plots.jpg", plot = arranged_RMSEA_ANOVA_plots, width = 10, h
 ```
 
 # Tables
+
 ## Chi-square
 
 ```{r}
